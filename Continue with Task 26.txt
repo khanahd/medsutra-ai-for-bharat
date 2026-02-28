@@ -1,0 +1,2 @@
+"Continue with Task 26"
+"Continue with the next task in the spec"

@@ -1,0 +1,227 @@
+# Requirements Document
+
+## Introduction
+
+MedSutra AI is a clinical AI assistant system designed for Indian hospitals to enhance clinical workflows through intelligent information summarization, cancer signal detection in radiology reports, automated documentation assistance, and workflow support. The system operates as an assistive tool where clinicians maintain full control over all clinical decisions, with AI providing suggestions, summaries, and risk assessments to improve efficiency and reduce documentation burden.
+
+## Glossary
+
+- **MedSutra_System**: The complete clinical AI assistant platform including all modules
+- **Clinical_Summarizer**: The NLP module that processes clinical documents and generates patient snapshots
+- **Radiology_Analyzer**: The module that analyzes radiology reports for cancer signals using text-based detection
+- **Vision_Analyzer**: The optional advanced module that analyzes medical images (CT/MRI) using computer vision
+- **Documentation_Assistant**: The module that auto-drafts clinical documents
+- **Workflow_Engine**: The module that suggests next clinical steps and generates patient summaries
+- **Guardrail_System**: The safety module that validates AI outputs against hallucinations and medical inaccuracies
+- **Clinical_LLM**: The fine-tuned large language model trained on medical data (MIMIC + Indian datasets)
+- **Explainability_Engine**: The module that provides reasoning and evidence for AI suggestions
+- **EMR**: Electronic Medical Record
+- **Cancer_Risk_Flag**: A categorical risk assessment (Low/Medium/High) with supporting evidence
+- **Patient_Snapshot**: A one-page clinical summary containing key patient information
+- **Clinician**: A licensed medical professional (doctor, specialist) using the system
+- **RAG_System**: Retrieval-Augmented Generation system using hospital-approved medical sources
+- **XAI**: Explainable AI - methods to make AI decisions interpretable
+- **SNOMED_CT**: Systematized Nomenclature of Medicine Clinical Terms
+- **ICD_10**: International Classification of Diseases, 10th Revision
+- **LOINC**: Logical Observation Identifiers Names and Codes
+- **BI_RADS**: Breast Imaging Reporting and Data System
+- **LI_RADS**: Liver Imaging Reporting and Data System
+- **DPDP_Act**: Digital Personal Data Protection Act (India)
+- **Deployment_Mode**: The operational configuration (On-Prem, Hybrid Cloud, or Offline)
+
+## Requirements
+
+### Requirement 1: Clinical Document Summarization
+
+**User Story:** As a clinician, I want to receive a one-page patient snapshot from multiple clinical documents, so that I can quickly understand the patient's clinical status without reading lengthy records.
+
+#### Acceptance Criteria
+
+1. WHEN EMR notes, lab reports, discharge summaries, referral notes, or radiology text reports are provided, THE Clinical_Summarizer SHALL generate a Patient_Snapshot within 10 seconds
+2. THE Patient_Snapshot SHALL include key complaints, past medical history, current medications, abnormal findings, and pending actions
+3. THE Patient_Snapshot SHALL not exceed one page in length
+4. THE Clinical_Summarizer SHALL use the Clinical_LLM fine-tuned on MIMIC and Indian clinical datasets
+5. THE Clinical_Summarizer SHALL ground medical terms using SNOMED_CT, ICD_10, and LOINC ontologies
+6. WHEN multiple documents are provided, THE Clinical_Summarizer SHALL merge information without duplication
+7. THE Clinical_Summarizer SHALL preserve critical medical information from source documents
+
+### Requirement 2: Text-Based Radiology Cancer Detection
+
+**User Story:** As a radiologist, I want the system to scan radiology reports for suspicious cancer-related terms, so that I can prioritize high-risk cases for review.
+
+#### Acceptance Criteria
+
+1. WHEN a radiology text report is provided, THE Radiology_Analyzer SHALL scan for suspicious cancer-related terms
+2. THE Radiology_Analyzer SHALL generate a Cancer_Risk_Flag (Low, Medium, or High) within 5 seconds
+3. THE Radiology_Analyzer SHALL apply organ-specific detection rules for lung nodules, breast lesions using BI_RADS, and liver lesions using LI_RADS
+4. THE Radiology_Analyzer SHALL provide an explainable reason for each Cancer_Risk_Flag
+5. THE Radiology_Analyzer SHALL extract and highlight suspicious terms from the report text
+6. WHEN no suspicious findings are detected, THE Radiology_Analyzer SHALL assign a Low Cancer_Risk_Flag
+
+### Requirement 3: Multimodal Image-Based Cancer Detection
+
+**User Story:** As a radiologist, I want the system to analyze CT and MRI images for suspicious regions, so that I can receive additional diagnostic support beyond text reports.
+
+#### Acceptance Criteria
+
+1. WHERE the Vision_Analyzer module is enabled, WHEN CT or MRI images are provided, THE Vision_Analyzer SHALL analyze images for suspicious regions
+2. WHERE the Vision_Analyzer module is enabled, THE Vision_Analyzer SHALL use Vision Transformer or CNN models for image analysis
+3. WHERE the Vision_Analyzer module is enabled, THE Vision_Analyzer SHALL generate explainable heatmaps using Grad-CAM or equivalent XAI techniques
+4. WHERE the Vision_Analyzer module is enabled, THE Vision_Analyzer SHALL extract coordinates of suspicious regions
+5. WHERE the Vision_Analyzer module is enabled, THE Vision_Analyzer SHALL complete image analysis within 30 seconds per scan
+6. WHERE the Vision_Analyzer module is enabled, THE Vision_Analyzer SHALL fuse text and image embeddings for multimodal risk assessment
+
+### Requirement 4: Automated Clinical Documentation Drafting
+
+**User Story:** As a clinician, I want the system to auto-draft clinical documents, so that I can reduce documentation time from 5-8 minutes to 2 minutes per patient.
+
+#### Acceptance Criteria
+
+1. WHEN a clinician requests documentation, THE Documentation_Assistant SHALL auto-draft OPD notes, discharge summaries, referral letters, or insurance documentation
+2. THE Documentation_Assistant SHALL generate drafts within 8 seconds
+3. THE Documentation_Assistant SHALL present drafts in a review workflow: Draft → Review → Edit → Approve
+4. THE Documentation_Assistant SHALL allow clinicians to edit any section of the draft before approval
+5. THE Documentation_Assistant SHALL not finalize any document without explicit clinician approval
+6. THE Documentation_Assistant SHALL use structured templates appropriate for each document type
+7. THE Documentation_Assistant SHALL populate drafts using data from the Patient_Snapshot and EMR
+
+### Requirement 5: Intelligent Clinical Workflow Suggestions
+
+**User Story:** As a clinician, I want the system to suggest next clinical steps, so that I can ensure appropriate follow-up care for patients.
+
+#### Acceptance Criteria
+
+1. WHEN a Patient_Snapshot indicates high-risk findings, THE Workflow_Engine SHALL suggest oncology referrals
+2. WHEN suspicious lesions are detected, THE Workflow_Engine SHALL suggest biopsy recommendations
+3. WHEN follow-up imaging is clinically indicated, THE Workflow_Engine SHALL generate follow-up imaging reminders
+4. THE Workflow_Engine SHALL provide reasoning for each suggested action
+5. THE Workflow_Engine SHALL allow clinicians to accept, modify, or reject suggestions
+6. THE Workflow_Engine SHALL not automatically execute any clinical action without clinician approval
+
+### Requirement 6: Multilingual Patient Communication
+
+**User Story:** As a clinician, I want to generate patient-friendly summaries in multiple languages, so that I can communicate effectively with diverse patient populations in India.
+
+#### Acceptance Criteria
+
+1. WHEN a patient summary is requested, THE Workflow_Engine SHALL generate patient-friendly summaries in English
+2. THE Workflow_Engine SHALL generate patient-friendly summaries in Hindi
+3. THE Workflow_Engine SHALL use simplified medical terminology appropriate for patient understanding
+4. THE Workflow_Engine SHALL translate medical jargon into layman terms
+5. WHERE regional language support is enabled, THE Workflow_Engine SHALL generate summaries in the configured regional language
+
+### Requirement 7: Medical Hallucination Prevention
+
+**User Story:** As a hospital administrator, I want the system to prevent hallucinated medical facts, so that clinicians receive only accurate and verified information.
+
+#### Acceptance Criteria
+
+1. THE Guardrail_System SHALL validate all AI-generated medical statements against the RAG_System
+2. THE RAG_System SHALL use only hospital-approved medical sources for validation
+3. WHEN the Guardrail_System detects unverifiable medical statements, THE MedSutra_System SHALL flag the statement for clinician review
+4. WHEN the Guardrail_System detects contradictory medical information, THE MedSutra_System SHALL present both sources to the clinician
+5. THE Guardrail_System SHALL not allow unvalidated medical facts to appear in final documents
+6. THE Guardrail_System SHALL log all flagged statements for quality review
+
+### Requirement 8: Assistive AI Operational Model
+
+**User Story:** As a hospital administrator, I want to ensure the system operates as assistive AI only, so that clinicians maintain full responsibility for all clinical decisions.
+
+#### Acceptance Criteria
+
+1. THE MedSutra_System SHALL display "AI Suggestion – Final Decision by Clinician" on all AI-generated outputs
+2. THE MedSutra_System SHALL require explicit clinician approval for all clinical actions
+3. THE MedSutra_System SHALL not execute autonomous diagnoses
+4. THE MedSutra_System SHALL not execute autonomous treatment decisions
+5. THE MedSutra_System SHALL log all clinician interactions with AI suggestions
+6. THE MedSutra_System SHALL clearly distinguish AI-generated content from clinician-entered content
+
+### Requirement 9: Explainable AI Transparency
+
+**User Story:** As a clinician, I want to understand why the AI made specific suggestions, so that I can make informed clinical decisions.
+
+#### Acceptance Criteria
+
+1. THE Explainability_Engine SHALL provide reasoning for every AI suggestion
+2. THE Explainability_Engine SHALL cite evidence sources for medical recommendations
+3. WHEN a Cancer_Risk_Flag is generated, THE Explainability_Engine SHALL list the specific findings that contributed to the risk assessment
+4. WHEN clinical workflow suggestions are made, THE Explainability_Engine SHALL reference clinical guidelines or protocols
+5. THE Explainability_Engine SHALL present explanations in clinically relevant terminology
+6. THE Explainability_Engine SHALL allow clinicians to drill down into detailed reasoning
+
+### Requirement 10: Indian Population Data Training
+
+**User Story:** As a hospital administrator, I want the AI models trained on Indian population data, so that the system reduces bias and improves accuracy for our patient demographics.
+
+#### Acceptance Criteria
+
+1. THE Clinical_LLM SHALL be fine-tuned using de-identified Indian hospital data
+2. THE Clinical_LLM SHALL be fine-tuned using ICMR (Indian Council of Medical Research) datasets
+3. THE MedSutra_System SHALL document the demographic composition of training datasets
+4. THE MedSutra_System SHALL monitor prediction accuracy across different demographic groups
+5. WHEN accuracy disparities are detected across demographic groups, THE MedSutra_System SHALL flag the models for retraining
+
+### Requirement 11: Data Privacy and Compliance
+
+**User Story:** As a hospital administrator, I want the system to comply with data protection regulations, so that patient privacy is protected and the hospital meets legal requirements.
+
+#### Acceptance Criteria
+
+1. THE MedSutra_System SHALL comply with HIPAA requirements for patient data protection
+2. THE MedSutra_System SHALL comply with India DPDP_Act requirements
+3. THE MedSutra_System SHALL encrypt patient data at rest using AES-256 or stronger encryption
+4. THE MedSutra_System SHALL encrypt patient data in transit using TLS 1.3 or stronger
+5. THE MedSutra_System SHALL implement role-based access control for all clinical data
+6. THE MedSutra_System SHALL log all access to patient data with user identification and timestamps
+7. THE MedSutra_System SHALL support data anonymization for research and training purposes
+8. THE MedSutra_System SHALL allow patients to request data deletion in compliance with DPDP_Act
+
+### Requirement 12: Flexible Deployment Architecture
+
+**User Story:** As a hospital IT administrator, I want flexible deployment options, so that the system can operate in diverse hospital environments from Tier-1 to Tier-3 facilities.
+
+#### Acceptance Criteria
+
+1. WHERE Deployment_Mode is On-Prem, THE MedSutra_System SHALL operate entirely within hospital infrastructure
+2. WHERE Deployment_Mode is Hybrid Cloud, THE MedSutra_System SHALL perform edge inference for radiology analysis and cloud processing for summarization
+3. WHERE Deployment_Mode is Offline, THE MedSutra_System SHALL provide core functionality without internet connectivity
+4. WHERE Deployment_Mode is Hybrid Cloud, THE Radiology_Analyzer SHALL complete inference at the edge with latency under 5 seconds
+5. WHERE Deployment_Mode is Offline, THE MedSutra_System SHALL synchronize learning updates when connectivity is restored
+6. THE MedSutra_System SHALL support deployment on standard hospital server hardware
+
+### Requirement 13: Clinical NLP Entity Recognition
+
+**User Story:** As a clinician, I want the system to accurately extract medical entities from clinical text, so that summaries contain precise medical information.
+
+#### Acceptance Criteria
+
+1. THE Clinical_Summarizer SHALL perform Named Entity Recognition on clinical documents
+2. THE Clinical_Summarizer SHALL extract disease names, medication names, dosages, lab values, and procedure names
+3. THE Clinical_Summarizer SHALL normalize extracted entities to SNOMED_CT, ICD_10, or LOINC codes
+4. THE Clinical_Summarizer SHALL achieve at least 90% precision on entity extraction for common medical terms
+5. WHEN ambiguous medical terms are encountered, THE Clinical_Summarizer SHALL present multiple interpretations to the clinician
+
+### Requirement 14: System Performance and Scalability
+
+**User Story:** As a hospital IT administrator, I want the system to handle concurrent users efficiently, so that clinical workflows are not disrupted during peak hours.
+
+#### Acceptance Criteria
+
+1. THE MedSutra_System SHALL support at least 100 concurrent clinician users
+2. WHEN system load exceeds 80% capacity, THE MedSutra_System SHALL queue requests and notify users of expected wait times
+3. THE MedSutra_System SHALL maintain response times under 10 seconds for summarization during normal load
+4. THE MedSutra_System SHALL maintain response times under 5 seconds for radiology text analysis during normal load
+5. THE MedSutra_System SHALL scale horizontally by adding compute nodes
+
+### Requirement 15: Audit Trail and Quality Monitoring
+
+**User Story:** As a hospital quality officer, I want comprehensive audit trails of AI interactions, so that I can monitor system performance and clinical outcomes.
+
+#### Acceptance Criteria
+
+1. THE MedSutra_System SHALL log all AI suggestions with timestamps and user identifiers
+2. THE MedSutra_System SHALL log clinician responses to AI suggestions (accepted, modified, rejected)
+3. THE MedSutra_System SHALL generate monthly quality reports showing AI suggestion acceptance rates
+4. THE MedSutra_System SHALL track time savings per clinician per document type
+5. THE MedSutra_System SHALL allow quality officers to review flagged cases where AI and clinician decisions diverged
+6. THE MedSutra_System SHALL retain audit logs for at least 7 years in compliance with medical record retention requirements

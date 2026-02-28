@@ -1,0 +1,1639 @@
+# Design Document: MedSutra AI Clinical Assistant
+
+## Overview
+
+MedSutra AI is a clinical AI assistant system designed for Indian hospitals to enhance clinical workflows through intelligent automation while maintaining clinician control over all clinical decisions. The system operates as an assistive tool that provides suggestions, summaries, and risk assessments to improve efficiency and reduce documentation burden.
+
+### System Purpose
+
+The system addresses critical challenges in Indian healthcare:
+- Reducing clinician documentation burden (target: 5-8 minutes to 2 minutes per patient)
+- Improving early cancer detection through automated radiology analysis
+- Supporting multilingual patient communication across diverse populations
+- Ensuring responsible AI deployment with explainability and safety guardrails
+- Enabling flexible deployment for Tier-1 to Tier-3 hospitals
+
+### Core Capabilities
+
+1. **Clinical Document Summarization**: Generate one-page patient snapshots from multiple clinical documents using fine-tuned LLMs
+2. **Radiology Cancer Detection**: Text-based analysis of radiology reports with optional multimodal image analysis
+3. **Automated Documentation**: Draft clinical documents with clinician review and approval workflow
+4. **Workflow Intelligence**: Suggest next clinical steps based on patient data and clinical guidelines
+5. **Multilingual Support**: Generate patient-friendly summaries in English, Hindi, and regional languages
+6. **Responsible AI**: Hallucination prevention, explainability, and assistive-only operation
+
+### Design Principles
+
+- **Clinician-in-Control**: All AI outputs require explicit clinician approval; no autonomous clinical decisions
+- **Explainability-First**: Every AI suggestion includes reasoning and evidence sources
+- **Privacy-by-Design**: HIPAA and DPDP Act compliance with encryption and access controls
+- **Deployment Flexibility**: Support for On-Prem, Hybrid Cloud, and Offline modes
+- **Indian Population Focus**: Models trained on Indian datasets to reduce bias
+
+
+## Architecture
+
+### System Architecture Overview
+
+The MedSutra system follows a modular microservices architecture with six core modules orchestrated by a central API gateway. The architecture supports three deployment modes: On-Prem, Hybrid Cloud, and Offline.
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        UI[Clinical UI]
+    end
+    
+    subgraph "API Gateway"
+        GW[API Gateway + Auth]
+    end
+    
+    subgraph "Core Modules"
+        CS[Clinical Summarizer]
+        RA[Radiology Analyzer]
+        VA[Vision Analyzer]
+        DA[Documentation Assistant]
+        WE[Workflow Engine]
+        GS[Guardrail System]
+    end
+    
+    subgraph "Foundation Layer"
+        LLM[Clinical LLM]
+        RAG[RAG System]
+        XAI[Explainability Engine]
+        ONT[Medical Ontologies]
+    end
+    
+    subgraph "Data Layer"
+        EMR[EMR Integration]
+        DB[(Secure Database)]
+        AUDIT[(Audit Logs)]
+    end
+    
+    UI --> GW
+    GW --> CS
+    GW --> RA
+    GW --> VA
+    GW --> DA
+    GW --> WE
+    
+    CS --> LLM
+    RA --> LLM
+    DA --> LLM
+    WE --> LLM
+    
+    CS --> ONT
+    RA --> ONT
+    
+    LLM --> RAG
+    LLM --> XAI
+    
+    CS --> GS
+    RA --> GS
+    DA --> GS
+    WE --> GS
+    
+    GW --> EMR
+    GW --> DB
+    GW --> AUDIT
+```
+
+### Deployment Architecture
+
+**On-Prem Deployment:**
+- All components run within hospital infrastructure
+- No external network dependencies
+- Full data sovereignty
+- Requires hospital server hardware (GPU recommended for Vision Analyzer)
+
+**Hybrid Cloud Deployment:**
+- Edge inference for Radiology Analyzer (< 5 seconds latency)
+- Cloud processing for Clinical Summarizer and Documentation Assistant
+- Encrypted data transmission via TLS 1.3
+- Fallback to edge-only mode if cloud unavailable
+
+**Offline Deployment:**
+- Core functionality without internet connectivity
+- Lightweight models optimized for CPU inference
+- Periodic synchronization for model updates when connectivity restored
+- Suitable for Tier-3 hospitals with limited connectivity
+
+### Module Responsibilities
+
+**Clinical Summarizer:**
+- Process EMR notes, lab reports, discharge summaries, referral notes, radiology text
+- Generate one-page Patient_Snapshot within 10 seconds
+- Perform NER and entity normalization to SNOMED_CT/ICD_10/LOINC
+- Merge information from multiple documents without duplication
+
+**Radiology Analyzer:**
+- Scan radiology text reports for cancer-related terms
+- Generate Cancer_Risk_Flag (Low/Medium/High) within 5 seconds
+- Apply organ-specific rules (lung nodules, BI_RADS for breast, LI_RADS for liver)
+- Extract and highlight suspicious terms
+
+**Vision Analyzer (Optional):**
+- Analyze CT/MRI images for suspicious regions
+- Use Vision Transformer or CNN models
+- Generate explainable heatmaps via Grad-CAM
+- Fuse text and image embeddings for multimodal assessment
+- Complete analysis within 30 seconds per scan
+
+**Documentation Assistant:**
+- Auto-draft OPD notes, discharge summaries, referral letters, insurance docs
+- Generate drafts within 8 seconds
+- Implement Draft → Review → Edit → Approve workflow
+- Use structured templates per document type
+
+**Workflow Engine:**
+- Suggest oncology referrals for high-risk findings
+- Recommend biopsies for suspicious lesions
+- Generate follow-up imaging reminders
+- Produce patient-friendly summaries in English, Hindi, and regional languages
+
+**Guardrail System:**
+- Validate AI statements against RAG_System
+- Flag unverifiable or contradictory medical information
+- Prevent hallucinated facts from appearing in final documents
+- Log all flagged statements for quality review
+
+
+## Components and Interfaces
+
+### API Gateway
+
+**Responsibilities:**
+- Authentication and authorization (role-based access control)
+- Request routing to appropriate modules
+- Rate limiting and load balancing
+- Audit logging of all requests
+
+**Interfaces:**
+```typescript
+interface APIGateway {
+  authenticate(credentials: Credentials): AuthToken
+  authorize(token: AuthToken, resource: Resource): boolean
+  route(request: APIRequest): Promise<APIResponse>
+  logAccess(userId: string, resource: Resource, timestamp: Date): void
+}
+```
+
+### Clinical Summarizer Module
+
+**Interfaces:**
+```typescript
+interface ClinicalSummarizer {
+  generateSummary(documents: ClinicalDocument[]): Promise<PatientSnapshot>
+  extractEntities(text: string): MedicalEntity[]
+  normalizeEntity(entity: MedicalEntity): NormalizedEntity
+  mergeDuplicates(entities: MedicalEntity[]): MedicalEntity[]
+}
+
+interface ClinicalDocument {
+  id: string
+  type: 'EMR_NOTE' | 'LAB_REPORT' | 'DISCHARGE_SUMMARY' | 'REFERRAL' | 'RADIOLOGY_TEXT'
+  content: string
+  timestamp: Date
+  author: string
+}
+
+interface PatientSnapshot {
+  patientId: string
+  keyComplaints: string[]
+  pastMedicalHistory: string[]
+  currentMedications: Medication[]
+  abnormalFindings: Finding[]
+  pendingActions: Action[]
+  generatedAt: Date
+  sources: string[]
+}
+
+interface MedicalEntity {
+  text: string
+  type: 'DISEASE' | 'MEDICATION' | 'DOSAGE' | 'LAB_VALUE' | 'PROCEDURE'
+  confidence: number
+  span: [number, number]
+}
+
+interface NormalizedEntity extends MedicalEntity {
+  snomedCode?: string
+  icd10Code?: string
+  loincCode?: string
+}
+```
+
+### Radiology Analyzer Module
+
+**Interfaces:**
+```typescript
+interface RadiologyAnalyzer {
+  analyzeTextReport(report: string): Promise<RadiologyAnalysis>
+  detectSuspiciousTerms(report: string): SuspiciousTerm[]
+  assessCancerRisk(terms: SuspiciousTerm[], organ: Organ): CancerRiskFlag
+  applyOrganRules(terms: SuspiciousTerm[], organ: Organ): RiskAssessment
+}
+
+interface RadiologyAnalysis {
+  reportId: string
+  cancerRiskFlag: 'LOW' | 'MEDIUM' | 'HIGH'
+  suspiciousTerms: SuspiciousTerm[]
+  explanation: string
+  organSpecificFindings: OrganFindings
+  processingTime: number
+}
+
+interface SuspiciousTerm {
+  term: string
+  category: 'NODULE' | 'LESION' | 'MASS' | 'OPACITY' | 'CALCIFICATION'
+  location: string
+  severity: number
+}
+
+interface OrganFindings {
+  organ: 'LUNG' | 'BREAST' | 'LIVER' | 'OTHER'
+  biRadsScore?: number  // For breast
+  liRadsScore?: number  // For liver
+  noduleCharacteristics?: NoduleCharacteristics  // For lung
+}
+```
+
+### Vision Analyzer Module
+
+**Interfaces:**
+```typescript
+interface VisionAnalyzer {
+  analyzeImage(image: MedicalImage): Promise<ImageAnalysis>
+  generateHeatmap(image: MedicalImage, model: VisionModel): Heatmap
+  extractSuspiciousRegions(heatmap: Heatmap): Region[]
+  fuseMultimodal(textEmbedding: Embedding, imageEmbedding: Embedding): MultimodalAssessment
+}
+
+interface MedicalImage {
+  id: string
+  type: 'CT' | 'MRI'
+  dicomData: Buffer
+  metadata: ImageMetadata
+}
+
+interface ImageAnalysis {
+  imageId: string
+  suspiciousRegions: Region[]
+  heatmap: Heatmap
+  confidence: number
+  processingTime: number
+}
+
+interface Region {
+  coordinates: BoundingBox
+  suspicionScore: number
+  characteristics: string[]
+}
+
+interface Heatmap {
+  imageId: string
+  attentionMap: number[][]
+  method: 'GRAD_CAM' | 'INTEGRATED_GRADIENTS'
+}
+```
+
+### Documentation Assistant Module
+
+**Interfaces:**
+```typescript
+interface DocumentationAssistant {
+  draftDocument(type: DocumentType, data: PatientSnapshot): Promise<DocumentDraft>
+  applyTemplate(type: DocumentType): DocumentTemplate
+  populateTemplate(template: DocumentTemplate, data: PatientSnapshot): string
+  submitForReview(draft: DocumentDraft): ReviewWorkflow
+}
+
+interface DocumentDraft {
+  id: string
+  type: 'OPD_NOTE' | 'DISCHARGE_SUMMARY' | 'REFERRAL_LETTER' | 'INSURANCE_DOC'
+  content: string
+  sections: DocumentSection[]
+  status: 'DRAFT' | 'UNDER_REVIEW' | 'APPROVED'
+  generatedAt: Date
+}
+
+interface ReviewWorkflow {
+  draftId: string
+  reviewerId: string
+  status: 'PENDING' | 'EDITING' | 'APPROVED' | 'REJECTED'
+  edits: Edit[]
+  approvedAt?: Date
+}
+
+interface DocumentSection {
+  name: string
+  content: string
+  editable: boolean
+  aiGenerated: boolean
+}
+```
+
+### Workflow Engine Module
+
+**Interfaces:**
+```typescript
+interface WorkflowEngine {
+  suggestNextSteps(snapshot: PatientSnapshot, analysis: RadiologyAnalysis): WorkflowSuggestion[]
+  generatePatientSummary(snapshot: PatientSnapshot, language: Language): string
+  translateToLayman(medicalText: string, language: Language): string
+  evaluateReferralNeed(findings: Finding[]): ReferralSuggestion
+}
+
+interface WorkflowSuggestion {
+  type: 'ONCOLOGY_REFERRAL' | 'BIOPSY' | 'FOLLOW_UP_IMAGING' | 'LAB_TEST'
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+  reasoning: string
+  evidence: string[]
+  guidelineReference?: string
+  clinicianAction: 'ACCEPT' | 'MODIFY' | 'REJECT' | 'PENDING'
+}
+
+interface ReferralSuggestion {
+  specialty: string
+  urgency: 'ROUTINE' | 'URGENT' | 'EMERGENCY'
+  reason: string
+  supportingFindings: Finding[]
+}
+
+type Language = 'ENGLISH' | 'HINDI' | 'REGIONAL'
+```
+
+### Guardrail System Module
+
+**Interfaces:**
+```typescript
+interface GuardrailSystem {
+  validateStatement(statement: string): ValidationResult
+  checkAgainstRAG(statement: string): RAGValidation
+  detectContradictions(statements: string[]): Contradiction[]
+  flagForReview(statement: string, reason: string): FlaggedItem
+}
+
+interface ValidationResult {
+  statement: string
+  isVerifiable: boolean
+  confidence: number
+  sources: string[]
+  contradictions: Contradiction[]
+  flagged: boolean
+}
+
+interface RAGValidation {
+  statement: string
+  supportingDocuments: Document[]
+  relevanceScore: number
+  verified: boolean
+}
+
+interface Contradiction {
+  statement1: string
+  statement2: string
+  source1: string
+  source2: string
+  conflictType: 'DIRECT' | 'PARTIAL' | 'CONTEXTUAL'
+}
+```
+
+### Explainability Engine
+
+**Interfaces:**
+```typescript
+interface ExplainabilityEngine {
+  explainSuggestion(suggestion: WorkflowSuggestion): Explanation
+  citeSources(statement: string): Citation[]
+  explainRiskFlag(flag: CancerRiskFlag, findings: Finding[]): RiskExplanation
+  provideDetailedReasoning(suggestionId: string): DetailedReasoning
+}
+
+interface Explanation {
+  suggestionId: string
+  reasoning: string
+  evidenceSources: Citation[]
+  clinicalGuidelines: string[]
+  confidenceLevel: number
+}
+
+interface Citation {
+  source: string
+  relevantText: string
+  credibilityScore: number
+}
+
+interface RiskExplanation {
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH'
+  contributingFactors: Factor[]
+  clinicalSignificance: string
+  recommendedActions: string[]
+}
+```
+
+### Clinical LLM Interface
+
+**Interfaces:**
+```typescript
+interface ClinicalLLM {
+  generateText(prompt: string, context: string[]): Promise<string>
+  embed(text: string): Promise<Embedding>
+  classify(text: string, labels: string[]): Promise<Classification>
+  extractStructured(text: string, schema: Schema): Promise<StructuredData>
+}
+
+interface Embedding {
+  vector: number[]
+  dimension: number
+  model: string
+}
+
+interface Classification {
+  label: string
+  confidence: number
+  alternatives: Array<{label: string, confidence: number}>
+}
+```
+
+
+## Data Models
+
+### Core Domain Models
+
+```typescript
+// Patient and Clinical Data
+interface Patient {
+  id: string
+  demographics: Demographics
+  medicalRecordNumber: string
+  encryptedPHI: EncryptedData
+}
+
+interface Demographics {
+  age: number
+  gender: string
+  ethnicity?: string
+  language: Language
+  region: string
+}
+
+interface Medication {
+  name: string
+  dosage: string
+  frequency: string
+  route: string
+  startDate: Date
+  endDate?: Date
+  snomedCode?: string
+}
+
+interface Finding {
+  type: 'CLINICAL' | 'LAB' | 'IMAGING'
+  description: string
+  severity: 'NORMAL' | 'ABNORMAL' | 'CRITICAL'
+  value?: string
+  unit?: string
+  referenceRange?: string
+  timestamp: Date
+}
+
+interface Action {
+  type: 'LAB_ORDER' | 'IMAGING_ORDER' | 'REFERRAL' | 'FOLLOW_UP' | 'MEDICATION'
+  description: string
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+  dueDate?: Date
+  status: 'PENDING' | 'COMPLETED' | 'CANCELLED'
+}
+
+// Medical Ontology Models
+interface OntologyMapping {
+  originalTerm: string
+  snomedCT?: {
+    code: string
+    description: string
+    hierarchy: string[]
+  }
+  icd10?: {
+    code: string
+    description: string
+  }
+  loinc?: {
+    code: string
+    description: string
+    component: string
+  }
+}
+
+// AI Model Metadata
+interface ModelMetadata {
+  modelId: string
+  version: string
+  trainingDatasets: string[]
+  demographicComposition: DemographicStats
+  performanceMetrics: PerformanceMetrics
+  lastUpdated: Date
+}
+
+interface DemographicStats {
+  ageDistribution: Record<string, number>
+  genderDistribution: Record<string, number>
+  ethnicityDistribution: Record<string, number>
+  regionDistribution: Record<string, number>
+}
+
+interface PerformanceMetrics {
+  accuracy: number
+  precision: number
+  recall: number
+  f1Score: number
+  demographicParity: Record<string, number>
+}
+
+// Security and Compliance Models
+interface EncryptedData {
+  ciphertext: string
+  algorithm: 'AES-256-GCM'
+  keyId: string
+  iv: string
+}
+
+interface AccessLog {
+  id: string
+  userId: string
+  userName: string
+  role: string
+  resource: string
+  action: 'READ' | 'WRITE' | 'DELETE' | 'EXPORT'
+  timestamp: Date
+  ipAddress: string
+  success: boolean
+}
+
+interface AuditRecord {
+  id: string
+  eventType: 'AI_SUGGESTION' | 'CLINICIAN_DECISION' | 'DOCUMENT_APPROVAL' | 'DATA_ACCESS'
+  userId: string
+  patientId: string
+  aiSuggestion?: string
+  clinicianResponse?: 'ACCEPTED' | 'MODIFIED' | 'REJECTED'
+  timestamp: Date
+  metadata: Record<string, any>
+}
+
+// RAG System Models
+interface RAGDocument {
+  id: string
+  title: string
+  content: string
+  source: 'CLINICAL_GUIDELINE' | 'MEDICAL_TEXTBOOK' | 'RESEARCH_PAPER' | 'HOSPITAL_PROTOCOL'
+  credibility: number
+  lastVerified: Date
+  embedding: Embedding
+}
+
+interface RAGQuery {
+  query: string
+  topK: number
+  filters?: {
+    source?: string[]
+    minCredibility?: number
+  }
+}
+
+interface RAGResult {
+  documents: RAGDocument[]
+  relevanceScores: number[]
+  totalResults: number
+}
+
+// Workflow and State Models
+interface ClinicalSession {
+  sessionId: string
+  clinicianId: string
+  patientId: string
+  startTime: Date
+  endTime?: Date
+  interactions: Interaction[]
+  documentsDrafted: string[]
+  suggestionsReceived: number
+  suggestionsAccepted: number
+}
+
+interface Interaction {
+  timestamp: Date
+  type: 'VIEW_SUMMARY' | 'REQUEST_DRAFT' | 'REVIEW_SUGGESTION' | 'APPROVE_DOCUMENT'
+  details: Record<string, any>
+  timeTaken: number
+}
+
+// Deployment Configuration Models
+interface DeploymentConfig {
+  mode: 'ON_PREM' | 'HYBRID_CLOUD' | 'OFFLINE'
+  enabledModules: {
+    clinicalSummarizer: boolean
+    radiologyAnalyzer: boolean
+    visionAnalyzer: boolean
+    documentationAssistant: boolean
+    workflowEngine: boolean
+  }
+  regionalLanguages: Language[]
+  hardwareConfig: HardwareConfig
+}
+
+interface HardwareConfig {
+  cpuCores: number
+  ramGB: number
+  gpuAvailable: boolean
+  gpuModel?: string
+  storageGB: number
+}
+
+// Quality Monitoring Models
+interface QualityReport {
+  reportId: string
+  period: {
+    startDate: Date
+    endDate: Date
+  }
+  metrics: {
+    totalSuggestions: number
+    acceptanceRate: number
+    modificationRate: number
+    rejectionRate: number
+    averageTimeSavings: number
+    flaggedCases: number
+  }
+  byModule: Record<string, ModuleMetrics>
+  demographicBreakdown: Record<string, number>
+}
+
+interface ModuleMetrics {
+  moduleName: string
+  requestCount: number
+  averageLatency: number
+  errorRate: number
+  userSatisfaction?: number
+}
+
+interface FlaggedCase {
+  caseId: string
+  patientId: string
+  aiSuggestion: string
+  clinicianDecision: string
+  divergenceReason: string
+  reviewStatus: 'PENDING' | 'REVIEWED' | 'ESCALATED'
+  reviewedBy?: string
+  reviewNotes?: string
+}
+```
+
+### Database Schema
+
+**Relational Tables (PostgreSQL):**
+
+```sql
+-- Patients table
+CREATE TABLE patients (
+  id UUID PRIMARY KEY,
+  medical_record_number VARCHAR(50) UNIQUE NOT NULL,
+  encrypted_phi BYTEA NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL
+);
+
+-- Clinical documents table
+CREATE TABLE clinical_documents (
+  id UUID PRIMARY KEY,
+  patient_id UUID REFERENCES patients(id),
+  document_type VARCHAR(50) NOT NULL,
+  content TEXT NOT NULL,
+  author_id UUID NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  metadata JSONB
+);
+
+-- Patient snapshots table
+CREATE TABLE patient_snapshots (
+  id UUID PRIMARY KEY,
+  patient_id UUID REFERENCES patients(id),
+  snapshot_data JSONB NOT NULL,
+  source_documents UUID[] NOT NULL,
+  generated_at TIMESTAMP NOT NULL,
+  generated_by VARCHAR(50) NOT NULL
+);
+
+-- Radiology analyses table
+CREATE TABLE radiology_analyses (
+  id UUID PRIMARY KEY,
+  patient_id UUID REFERENCES patients(id),
+  report_id UUID NOT NULL,
+  cancer_risk_flag VARCHAR(10) NOT NULL,
+  suspicious_terms JSONB NOT NULL,
+  explanation TEXT NOT NULL,
+  analyzed_at TIMESTAMP NOT NULL
+);
+
+-- Document drafts table
+CREATE TABLE document_drafts (
+  id UUID PRIMARY KEY,
+  patient_id UUID REFERENCES patients(id),
+  document_type VARCHAR(50) NOT NULL,
+  content TEXT NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  created_by UUID NOT NULL,
+  approved_by UUID,
+  created_at TIMESTAMP NOT NULL,
+  approved_at TIMESTAMP
+);
+
+-- Workflow suggestions table
+CREATE TABLE workflow_suggestions (
+  id UUID PRIMARY KEY,
+  patient_id UUID REFERENCES patients(id),
+  suggestion_type VARCHAR(50) NOT NULL,
+  priority VARCHAR(10) NOT NULL,
+  reasoning TEXT NOT NULL,
+  evidence JSONB NOT NULL,
+  clinician_action VARCHAR(20),
+  created_at TIMESTAMP NOT NULL,
+  responded_at TIMESTAMP
+);
+
+-- Access logs table
+CREATE TABLE access_logs (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL,
+  user_name VARCHAR(100) NOT NULL,
+  role VARCHAR(50) NOT NULL,
+  resource VARCHAR(200) NOT NULL,
+  action VARCHAR(20) NOT NULL,
+  timestamp TIMESTAMP NOT NULL,
+  ip_address INET NOT NULL,
+  success BOOLEAN NOT NULL
+);
+
+-- Audit records table
+CREATE TABLE audit_records (
+  id UUID PRIMARY KEY,
+  event_type VARCHAR(50) NOT NULL,
+  user_id UUID NOT NULL,
+  patient_id UUID,
+  ai_suggestion TEXT,
+  clinician_response VARCHAR(20),
+  timestamp TIMESTAMP NOT NULL,
+  metadata JSONB,
+  CONSTRAINT audit_retention CHECK (timestamp > NOW() - INTERVAL '7 years')
+);
+
+-- Flagged statements table
+CREATE TABLE flagged_statements (
+  id UUID PRIMARY KEY,
+  statement TEXT NOT NULL,
+  reason VARCHAR(200) NOT NULL,
+  module VARCHAR(50) NOT NULL,
+  patient_id UUID,
+  flagged_at TIMESTAMP NOT NULL,
+  reviewed BOOLEAN DEFAULT FALSE,
+  review_notes TEXT
+);
+```
+
+**Vector Database (for RAG System):**
+
+```python
+# Using a vector database like Pinecone, Weaviate, or pgvector
+{
+  "id": "doc_12345",
+  "title": "NCCN Guidelines for Lung Cancer Screening",
+  "content": "...",
+  "source": "CLINICAL_GUIDELINE",
+  "credibility": 0.95,
+  "last_verified": "2024-01-15",
+  "embedding": [0.123, -0.456, ...],  # 768 or 1536 dimensions
+  "metadata": {
+    "organization": "NCCN",
+    "year": 2024,
+    "specialty": "Oncology"
+  }
+}
+```
+
+
+## Correctness Properties
+
+*A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+
+### Property Reflection
+
+After analyzing all acceptance criteria, I identified the following redundancies and consolidations:
+
+**Consolidated Properties:**
+- Multiple timing requirements (1.1, 2.2, 3.5, 4.2, 14.3, 14.4) can be consolidated into module-specific performance properties
+- Explanation requirements (2.4, 5.4, 9.1) are redundant - one property covers all AI outputs
+- Logging requirements (7.6, 8.5, 15.1, 15.2) can be consolidated into comprehensive audit trail properties
+- Language generation requirements (6.1, 6.2, 6.5) can be consolidated into one multilingual property
+- Approval requirements (4.5, 5.6, 8.2) are redundant - one property covers all clinical actions
+- Source attribution requirements (8.1, 8.6) can be consolidated
+- Ontology mapping requirements (1.5, 13.3) are redundant
+
+**Eliminated Redundancies:**
+- Property about entity extraction (13.1) is subsumed by property about extracting specific entity types (13.2)
+- Property about RAG validation (7.1) is subsumed by property about preventing unvalidated facts (7.5)
+
+### Property 1: Clinical Summarization Performance
+
+*For any* set of clinical documents (EMR notes, lab reports, discharge summaries, referral notes, or radiology text), the Clinical_Summarizer should generate a Patient_Snapshot within 10 seconds.
+
+**Validates: Requirements 1.1**
+
+### Property 2: Patient Snapshot Completeness
+
+*For any* Patient_Snapshot generated from source documents containing patient information, the snapshot should include all required sections: key complaints, past medical history, current medications, abnormal findings, and pending actions.
+
+**Validates: Requirements 1.2**
+
+### Property 3: Patient Snapshot Length Constraint
+
+*For any* generated Patient_Snapshot, the output length should not exceed one page (approximately 4000 characters or 60 lines).
+
+**Validates: Requirements 1.3**
+
+### Property 4: Medical Entity Ontology Mapping
+
+*For any* medical entity extracted from clinical documents (diseases, medications, procedures), the entity should be mapped to at least one standard ontology code (SNOMED_CT, ICD_10, or LOINC).
+
+**Validates: Requirements 1.5, 13.3**
+
+### Property 5: Information Deduplication
+
+*For any* set of clinical documents with overlapping information, the generated Patient_Snapshot should not contain duplicate entries for the same medical fact.
+
+**Validates: Requirements 1.6**
+
+### Property 6: Suspicious Term Detection
+
+*For any* radiology text report containing known cancer-related suspicious terms, the Radiology_Analyzer should identify and extract those terms.
+
+**Validates: Requirements 2.1, 2.5**
+
+### Property 7: Radiology Analysis Performance and Validity
+
+*For any* radiology text report, the Radiology_Analyzer should generate a Cancer_Risk_Flag that is one of {Low, Medium, High} within 5 seconds.
+
+**Validates: Requirements 2.2**
+
+### Property 8: Organ-Specific Risk Assessment
+
+*For any* radiology report mentioning specific organs (lung, breast, liver), the Radiology_Analyzer should apply the appropriate organ-specific scoring system (BI_RADS for breast, LI_RADS for liver, nodule characteristics for lung).
+
+**Validates: Requirements 2.3**
+
+### Property 9: Vision Analysis Output Structure
+
+*For any* medical image (CT or MRI) analyzed by the Vision_Analyzer when enabled, the output should include a heatmap and a list of suspicious regions (possibly empty).
+
+**Validates: Requirements 3.1, 3.3**
+
+### Property 10: Suspicious Region Coordinate Validity
+
+*For any* suspicious region detected in a medical image, the bounding box coordinates should be within the image dimensions.
+
+**Validates: Requirements 3.4**
+
+### Property 11: Vision Analysis Performance
+
+*For any* medical image scan, the Vision_Analyzer should complete analysis within 30 seconds when enabled.
+
+**Validates: Requirements 3.5**
+
+### Property 12: Multimodal Information Fusion
+
+*For any* patient case where both radiology text and medical images are provided, the risk assessment should reflect findings from both modalities.
+
+**Validates: Requirements 3.6**
+
+### Property 13: Document Type Generation
+
+*For any* documentation request specifying a document type (OPD note, discharge summary, referral letter, insurance doc), the Documentation_Assistant should generate a draft of the requested type.
+
+**Validates: Requirements 4.1**
+
+### Property 14: Documentation Performance
+
+*For any* documentation request, the Documentation_Assistant should generate a draft within 8 seconds.
+
+**Validates: Requirements 4.2**
+
+### Property 15: Document Workflow State Machine
+
+*For any* generated document draft, it should start in Draft status and support the state transitions: Draft → Review → Edit → Approve, and cannot reach Approved status without an explicit approval action.
+
+**Validates: Requirements 4.3, 4.5**
+
+### Property 16: Document Section Editability
+
+*For any* document draft section, it should be marked as editable and accept modifications before approval.
+
+**Validates: Requirements 4.4**
+
+### Property 17: Template Structure Conformance
+
+*For any* generated document of a specific type, the output should conform to the structured template defined for that document type.
+
+**Validates: Requirements 4.6**
+
+### Property 18: Draft Data Population
+
+*For any* information present in the Patient_Snapshot or EMR, that information should appear in the generated document draft when relevant to the document type.
+
+**Validates: Requirements 4.7**
+
+### Property 19: High-Risk Oncology Referral
+
+*For any* Patient_Snapshot containing high-risk findings, the Workflow_Engine should generate an oncology referral suggestion.
+
+**Validates: Requirements 5.1**
+
+### Property 20: Suspicious Lesion Biopsy Recommendation
+
+*For any* radiology analysis detecting suspicious lesions, the Workflow_Engine should generate a biopsy recommendation.
+
+**Validates: Requirements 5.2**
+
+### Property 21: Follow-Up Imaging Reminders
+
+*For any* clinical scenario where follow-up imaging is indicated, the Workflow_Engine should generate appropriate follow-up reminders.
+
+**Validates: Requirements 5.3**
+
+### Property 22: AI Suggestion Explainability
+
+*For any* AI-generated suggestion (workflow, risk assessment, or documentation), the output should include a non-empty reasoning field explaining the suggestion.
+
+**Validates: Requirements 2.4, 5.4, 9.1**
+
+### Property 23: Clinician Action Options
+
+*For any* workflow suggestion, the system should support all three clinician actions: accept, modify, and reject.
+
+**Validates: Requirements 5.5**
+
+### Property 24: No Autonomous Clinical Actions
+
+*For any* clinical action (diagnosis, treatment, referral, order), the system should not execute it without an explicit clinician approval record.
+
+**Validates: Requirements 5.6, 8.2, 8.3, 8.4**
+
+### Property 25: Multilingual Patient Summary Generation
+
+*For any* patient summary request, the Workflow_Engine should generate output in English and Hindi, and additionally in the configured regional language when regional support is enabled.
+
+**Validates: Requirements 6.1, 6.2, 6.5**
+
+### Property 26: Medical Jargon Translation
+
+*For any* patient-friendly summary, known medical jargon terms should be replaced with simpler layman alternatives.
+
+**Validates: Requirements 6.4**
+
+### Property 27: RAG Source Approval
+
+*For any* document in the RAG_System, it should have a hospital-approved source designation.
+
+**Validates: Requirements 7.2**
+
+### Property 28: Unverifiable Statement Flagging
+
+*For any* AI-generated medical statement that cannot be verified against the RAG_System, the statement should be flagged for clinician review.
+
+**Validates: Requirements 7.3**
+
+### Property 29: Contradictory Information Presentation
+
+*For any* pair of contradictory medical statements detected by the Guardrail_System, both sources should be presented to the clinician.
+
+**Validates: Requirements 7.4**
+
+### Property 30: Validated Facts in Final Documents
+
+*For any* medical statement in a finalized document, there should exist a validation record showing it was checked against approved sources.
+
+**Validates: Requirements 7.5**
+
+### Property 31: AI Content Attribution
+
+*For any* AI-generated output, it should display the disclaimer "AI Suggestion – Final Decision by Clinician" and be clearly marked as AI-generated rather than clinician-entered.
+
+**Validates: Requirements 8.1, 8.6**
+
+### Property 32: Comprehensive Audit Logging
+
+*For any* AI suggestion, clinician interaction, or patient data access, a log entry should exist with timestamp, user identifier, and action details.
+
+**Validates: Requirements 7.6, 8.5, 11.6, 15.1, 15.2**
+
+### Property 33: Evidence Citation for Recommendations
+
+*For any* medical recommendation, the Explainability_Engine should provide citations to evidence sources.
+
+**Validates: Requirements 9.2**
+
+### Property 34: Risk Flag Contributing Findings
+
+*For any* Cancer_Risk_Flag generated, the explanation should list the specific findings that contributed to the risk assessment.
+
+**Validates: Requirements 9.3**
+
+### Property 35: Guideline References for Workflow Suggestions
+
+*For any* clinical workflow suggestion, the explanation should reference relevant clinical guidelines or protocols.
+
+**Validates: Requirements 9.4**
+
+### Property 36: Detailed Reasoning Access
+
+*For any* AI explanation, the system should provide an interface to access more detailed reasoning.
+
+**Validates: Requirements 9.6**
+
+### Property 37: Model Demographic Documentation
+
+*For any* Clinical_LLM model in use, the model metadata should include demographic composition data of the training datasets.
+
+**Validates: Requirements 10.3**
+
+### Property 38: Demographic Accuracy Monitoring
+
+*For any* model in production, prediction accuracy metrics should be tracked and stored per demographic group.
+
+**Validates: Requirements 10.4**
+
+### Property 39: Disparity-Triggered Retraining Flag
+
+*For any* model where accuracy disparities across demographic groups exceed a threshold, a retraining flag should be set.
+
+**Validates: Requirements 10.5**
+
+### Property 40: Data Encryption at Rest
+
+*For any* patient data stored in the system, it should be encrypted using AES-256 or stronger encryption algorithm.
+
+**Validates: Requirements 11.3**
+
+### Property 41: Data Encryption in Transit
+
+*For any* patient data transmission, the connection should use TLS 1.3 or stronger encryption.
+
+**Validates: Requirements 11.4**
+
+### Property 42: Role-Based Access Control
+
+*For any* attempt to access clinical data, the system should verify the user's role-based permissions before granting access.
+
+**Validates: Requirements 11.5**
+
+### Property 43: Data Anonymization for Research
+
+*For any* data anonymization operation, all personally identifiable information (PII) should be removed from the output.
+
+**Validates: Requirements 11.7**
+
+### Property 44: Patient Data Deletion Requests
+
+*For any* patient data deletion request, the system should process it and remove the patient's data in compliance with DPDP Act requirements.
+
+**Validates: Requirements 11.8**
+
+### Property 45: On-Prem Network Isolation
+
+*For any* operation in On-Prem deployment mode, the system should not make external network calls.
+
+**Validates: Requirements 12.1**
+
+### Property 46: Hybrid Cloud Component Placement
+
+*For any* operation in Hybrid Cloud deployment mode, radiology analysis should execute at the edge and summarization should use cloud processing.
+
+**Validates: Requirements 12.2, 12.4**
+
+### Property 47: Offline Mode Functionality
+
+*For any* core operation in Offline deployment mode, the system should complete it without requiring internet connectivity.
+
+**Validates: Requirements 12.3**
+
+### Property 48: Offline Synchronization
+
+*For any* period of offline operation, when network connectivity is restored, the system should synchronize learning updates.
+
+**Validates: Requirements 12.5**
+
+### Property 49: Named Entity Extraction
+
+*For any* clinical document containing medical entities (diseases, medications, dosages, lab values, procedures), the Clinical_Summarizer should extract those entities.
+
+**Validates: Requirements 13.1, 13.2**
+
+### Property 50: Ambiguous Term Multiple Interpretations
+
+*For any* ambiguous medical term encountered, the Clinical_Summarizer should present multiple possible interpretations to the clinician.
+
+**Validates: Requirements 13.5**
+
+### Property 51: Summarization Performance Under Normal Load
+
+*For any* summarization request under normal system load (< 80% capacity), the response time should be under 10 seconds.
+
+**Validates: Requirements 14.3**
+
+### Property 52: Radiology Analysis Performance Under Normal Load
+
+*For any* radiology text analysis request under normal system load (< 80% capacity), the response time should be under 5 seconds.
+
+**Validates: Requirements 14.4**
+
+### Property 53: Quality Report Generation
+
+*For any* monthly reporting period, the system should generate a quality report containing AI suggestion acceptance rates.
+
+**Validates: Requirements 15.3**
+
+### Property 54: Time Savings Tracking
+
+*For any* document creation session, the system should track and store time savings metrics per clinician and document type.
+
+**Validates: Requirements 15.4**
+
+### Property 55: Flagged Case Review Access
+
+*For any* flagged case where AI and clinician decisions diverged, quality officers should have access to a review interface.
+
+**Validates: Requirements 15.5**
+
+### Property 56: Audit Log Retention
+
+*For any* audit log entry, it should have a retention policy of at least 7 years.
+
+**Validates: Requirements 15.6**
+
+
+## Error Handling
+
+### Error Categories
+
+**Input Validation Errors:**
+- Invalid document format or corrupted files
+- Missing required patient identifiers
+- Malformed medical images (non-DICOM, corrupted headers)
+- Empty or whitespace-only clinical documents
+- Unsupported document types
+
+**Processing Errors:**
+- LLM inference failures or timeouts
+- NER extraction failures
+- Ontology mapping failures (term not found in SNOMED/ICD-10/LOINC)
+- RAG system unavailable or query failures
+- Vision model inference errors
+
+**Data Access Errors:**
+- Authentication failures
+- Authorization failures (insufficient permissions)
+- EMR integration connection failures
+- Database connection failures
+- Encryption/decryption failures
+
+**Resource Constraint Errors:**
+- System capacity exceeded (> 100 concurrent users)
+- Request timeout (processing exceeds time limits)
+- Insufficient GPU memory for vision analysis
+- Storage quota exceeded
+
+**Compliance Errors:**
+- Unverifiable medical statements detected
+- Contradictory information detected
+- Audit log write failures
+- Encryption requirement violations
+
+### Error Handling Strategies
+
+**Graceful Degradation:**
+```typescript
+// Example: Fallback when Vision Analyzer unavailable
+async function analyzeRadiology(textReport: string, image?: MedicalImage): Promise<Analysis> {
+  try {
+    const textAnalysis = await radiologyAnalyzer.analyzeTextReport(textReport);
+    
+    if (image && visionAnalyzer.isEnabled()) {
+      try {
+        const imageAnalysis = await visionAnalyzer.analyzeImage(image);
+        return fuseMultimodal(textAnalysis, imageAnalysis);
+      } catch (visionError) {
+        logger.warn('Vision analysis failed, falling back to text-only', visionError);
+        return textAnalysis; // Graceful degradation
+      }
+    }
+    
+    return textAnalysis;
+  } catch (error) {
+    logger.error('Radiology analysis failed', error);
+    throw new RadiologyAnalysisError('Unable to analyze radiology report', error);
+  }
+}
+```
+
+**Retry with Exponential Backoff:**
+```typescript
+// For transient failures (network, temporary service unavailability)
+async function queryRAGWithRetry(query: string, maxRetries: number = 3): Promise<RAGResult> {
+  let attempt = 0;
+  let delay = 1000; // Start with 1 second
+  
+  while (attempt < maxRetries) {
+    try {
+      return await ragSystem.query(query);
+    } catch (error) {
+      attempt++;
+      if (attempt >= maxRetries) {
+        throw new RAGUnavailableError('RAG system unavailable after retries', error);
+      }
+      await sleep(delay);
+      delay *= 2; // Exponential backoff
+    }
+  }
+}
+```
+
+**User-Facing Error Messages:**
+- Never expose internal system details or stack traces to users
+- Provide actionable guidance for resolution
+- Log detailed error information for debugging
+- Maintain clinical context in error messages
+
+```typescript
+interface UserError {
+  code: string;
+  message: string;
+  userGuidance: string;
+  severity: 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+  retryable: boolean;
+}
+
+// Example error mapping
+const ERROR_MESSAGES: Record<string, UserError> = {
+  'DOCUMENT_PARSE_FAILED': {
+    code: 'DOCUMENT_PARSE_FAILED',
+    message: 'Unable to process the clinical document',
+    userGuidance: 'Please verify the document format and try again. Supported formats: PDF, TXT, HL7.',
+    severity: 'ERROR',
+    retryable: true
+  },
+  'RAG_VALIDATION_FAILED': {
+    code: 'RAG_VALIDATION_FAILED',
+    message: 'Unable to verify medical statement against approved sources',
+    userGuidance: 'This statement has been flagged for manual review. Please verify against clinical guidelines.',
+    severity: 'WARNING',
+    retryable: false
+  }
+};
+```
+
+**Critical Error Handling:**
+- Audit log write failures: Queue logs locally and retry, escalate if persistent
+- Encryption failures: Reject operation immediately, do not process unencrypted PHI
+- Authentication failures: Lock account after 5 failed attempts, require admin unlock
+- Guardrail system failures: Reject AI output, require manual clinician input
+
+**Deployment-Specific Error Handling:**
+
+**Hybrid Cloud Mode:**
+- Cloud service unavailable: Fall back to edge-only processing
+- Network latency exceeds threshold: Switch to edge processing
+- Data transmission failures: Queue for retry, notify user of delay
+
+**Offline Mode:**
+- Model update unavailable: Continue with current model, log for later sync
+- Synchronization failures: Queue updates, retry on next connectivity window
+
+### Error Logging and Monitoring
+
+**Structured Error Logging:**
+```typescript
+interface ErrorLog {
+  errorId: string;
+  timestamp: Date;
+  errorType: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  module: string;
+  userId?: string;
+  patientId?: string;
+  errorMessage: string;
+  stackTrace?: string;
+  context: Record<string, any>;
+  resolved: boolean;
+}
+```
+
+**Monitoring and Alerting:**
+- Critical errors (encryption failures, audit log failures): Immediate alert to administrators
+- High error rates (> 5% of requests): Alert to operations team
+- Guardrail system flags: Daily summary to quality officers
+- Performance degradation: Alert when response times exceed thresholds by 50%
+
+**Error Recovery Procedures:**
+1. Transient failures: Automatic retry with exponential backoff
+2. Service unavailable: Graceful degradation to available components
+3. Data corruption: Reject input, request re-submission
+4. System overload: Queue requests, provide wait time estimates
+5. Compliance violations: Halt operation, require manual intervention
+
+
+## Testing Strategy
+
+### Dual Testing Approach
+
+The MedSutra system requires both unit testing and property-based testing to ensure comprehensive coverage:
+
+**Unit Tests** focus on:
+- Specific examples demonstrating correct behavior
+- Edge cases (empty inputs, malformed data, boundary conditions)
+- Error conditions and exception handling
+- Integration points between modules
+- Specific clinical scenarios with known expected outputs
+
+**Property-Based Tests** focus on:
+- Universal properties that hold for all valid inputs
+- Comprehensive input coverage through randomization
+- Invariants that must be maintained across operations
+- Round-trip properties (serialization, parsing, encryption)
+- Performance constraints across diverse inputs
+
+Both approaches are complementary and necessary: unit tests catch concrete bugs and validate specific scenarios, while property tests verify general correctness across the input space.
+
+### Property-Based Testing Framework
+
+**Framework Selection:**
+- **Python**: Use Hypothesis for property-based testing
+- **TypeScript/JavaScript**: Use fast-check for property-based testing
+- **Java**: Use jqwik for property-based testing
+
+**Configuration:**
+- Minimum 100 iterations per property test (due to randomization)
+- Each property test must reference its design document property
+- Tag format: `Feature: medsutra-clinical-ai-assistant, Property {number}: {property_text}`
+
+**Example Property Test Structure:**
+
+```python
+from hypothesis import given, strategies as st
+import hypothesis
+
+# Property 1: Clinical Summarization Performance
+@given(
+    documents=st.lists(
+        st.builds(
+            ClinicalDocument,
+            id=st.uuids(),
+            type=st.sampled_from(['EMR_NOTE', 'LAB_REPORT', 'DISCHARGE_SUMMARY', 'REFERRAL', 'RADIOLOGY_TEXT']),
+            content=st.text(min_size=100, max_size=5000),
+            timestamp=st.datetimes(),
+            author=st.text(min_size=1, max_size=100)
+        ),
+        min_size=1,
+        max_size=10
+    )
+)
+@hypothesis.settings(max_examples=100)
+def test_clinical_summarization_performance(documents):
+    """
+    Feature: medsutra-clinical-ai-assistant, Property 1: Clinical Summarization Performance
+    For any set of clinical documents, the Clinical_Summarizer should generate 
+    a Patient_Snapshot within 10 seconds.
+    """
+    start_time = time.time()
+    snapshot = clinical_summarizer.generate_summary(documents)
+    elapsed_time = time.time() - start_time
+    
+    assert snapshot is not None
+    assert elapsed_time < 10.0
+
+
+# Property 5: Information Deduplication
+@given(
+    base_document=st.builds(ClinicalDocument, ...),
+    duplicate_info=st.text(min_size=50, max_size=200)
+)
+@hypothesis.settings(max_examples=100)
+def test_information_deduplication(base_document, duplicate_info):
+    """
+    Feature: medsutra-clinical-ai-assistant, Property 5: Information Deduplication
+    For any set of clinical documents with overlapping information, 
+    the generated Patient_Snapshot should not contain duplicate entries.
+    """
+    # Create documents with intentional duplication
+    doc1 = base_document
+    doc2 = ClinicalDocument(
+        id=uuid4(),
+        type=doc1.type,
+        content=doc1.content + " " + duplicate_info,
+        timestamp=datetime.now(),
+        author="Dr. Test"
+    )
+    doc3 = ClinicalDocument(
+        id=uuid4(),
+        type=doc1.type,
+        content=duplicate_info + " " + doc1.content,
+        timestamp=datetime.now(),
+        author="Dr. Test"
+    )
+    
+    snapshot = clinical_summarizer.generate_summary([doc1, doc2, doc3])
+    
+    # Check for duplicates in each section
+    assert has_no_duplicates(snapshot.key_complaints)
+    assert has_no_duplicates(snapshot.past_medical_history)
+    assert has_no_duplicates(snapshot.current_medications)
+```
+
+```typescript
+// TypeScript example using fast-check
+import fc from 'fast-check';
+
+// Property 15: Document Workflow State Machine
+describe('Feature: medsutra-clinical-ai-assistant, Property 15: Document Workflow State Machine', () => {
+  it('should enforce workflow state transitions and require approval', () => {
+    fc.assert(
+      fc.property(
+        fc.record({
+          patientId: fc.uuid(),
+          documentType: fc.constantFrom('OPD_NOTE', 'DISCHARGE_SUMMARY', 'REFERRAL_LETTER', 'INSURANCE_DOC'),
+          content: fc.string({ minLength: 100, maxLength: 2000 })
+        }),
+        async (draftData) => {
+          // Generate draft
+          const draft = await documentationAssistant.draftDocument(
+            draftData.documentType,
+            draftData
+          );
+          
+          // Verify initial state
+          expect(draft.status).toBe('DRAFT');
+          
+          // Verify cannot approve without review
+          await expect(
+            documentationAssistant.approve(draft.id)
+          ).rejects.toThrow();
+          
+          // Transition through workflow
+          await documentationAssistant.submitForReview(draft.id);
+          const reviewed = await documentationAssistant.getDraft(draft.id);
+          expect(reviewed.status).toBe('UNDER_REVIEW');
+          
+          // Verify approval requires explicit action
+          const approved = await documentationAssistant.approve(draft.id, 'clinician-123');
+          expect(approved.status).toBe('APPROVED');
+          expect(approved.approvedBy).toBe('clinician-123');
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+});
+```
+
+### Unit Testing Strategy
+
+**Module-Level Unit Tests:**
+
+**Clinical Summarizer:**
+- Test with specific clinical documents (sample EMR notes, lab reports)
+- Test empty document handling
+- Test malformed document handling
+- Test entity extraction for common medical terms
+- Test ontology mapping for known terms
+- Test handling of documents in different formats
+
+**Radiology Analyzer:**
+- Test with sample radiology reports containing known suspicious terms
+- Test reports with no suspicious findings (should return Low risk)
+- Test organ-specific rule application (BI_RADS, LI_RADS)
+- Test edge cases: empty reports, non-radiology text
+- Test performance with various report lengths
+
+**Vision Analyzer:**
+- Test with sample CT/MRI images
+- Test coordinate validation for detected regions
+- Test heatmap generation
+- Test handling of corrupted images
+- Test handling of non-medical images
+
+**Documentation Assistant:**
+- Test each document type generation (OPD, discharge, referral, insurance)
+- Test template population with sample data
+- Test workflow state transitions
+- Test edit functionality
+- Test approval workflow
+
+**Workflow Engine:**
+- Test oncology referral generation for high-risk cases
+- Test biopsy recommendations for suspicious lesions
+- Test follow-up reminder generation
+- Test multilingual summary generation
+- Test medical jargon translation with known terms
+
+**Guardrail System:**
+- Test validation against RAG system
+- Test flagging of unverifiable statements
+- Test contradiction detection with known contradictory statements
+- Test prevention of unvalidated facts in final documents
+
+**Integration Tests:**
+- End-to-end workflow: document upload → summarization → risk assessment → documentation → approval
+- EMR integration: data retrieval and synchronization
+- RAG system integration: query and validation
+- Audit logging: verify logs are created for all operations
+- Multi-module workflows: summarization → workflow suggestions → documentation
+
+**Security and Compliance Tests:**
+- Test encryption at rest (verify AES-256)
+- Test encryption in transit (verify TLS 1.3)
+- Test role-based access control (verify unauthorized access is blocked)
+- Test audit logging (verify all required fields are logged)
+- Test data anonymization (verify PII removal)
+- Test patient data deletion (verify complete removal)
+
+**Performance Tests:**
+- Load testing: 100 concurrent users
+- Stress testing: exceed capacity and verify queueing
+- Latency testing: verify response time requirements under normal load
+- Scalability testing: verify horizontal scaling
+
+**Deployment-Specific Tests:**
+- On-Prem: verify no external network calls
+- Hybrid Cloud: verify edge/cloud component placement
+- Offline: verify functionality without network
+- Offline sync: verify synchronization after connectivity restored
+
+### Test Data Management
+
+**Synthetic Test Data:**
+- Generate synthetic clinical documents using templates
+- Generate synthetic patient data with diverse demographics
+- Generate synthetic radiology reports with varying risk levels
+- Generate synthetic medical images (or use public datasets like MIMIC-CXR)
+
+**De-identified Real Data:**
+- Use de-identified data from MIMIC-III/MIMIC-IV datasets
+- Use de-identified Indian hospital data (with appropriate approvals)
+- Ensure all test data complies with privacy regulations
+
+**Test Data Requirements:**
+- Diverse demographic representation (age, gender, ethnicity, region)
+- Multiple languages (English, Hindi, regional languages)
+- Various clinical specialties and conditions
+- Edge cases: rare conditions, ambiguous findings, contradictory information
+
+### Continuous Testing
+
+**CI/CD Pipeline:**
+1. Unit tests run on every commit
+2. Property-based tests run on every pull request
+3. Integration tests run on merge to main branch
+4. Performance tests run nightly
+5. Security scans run weekly
+
+**Test Coverage Goals:**
+- Unit test coverage: > 80% code coverage
+- Property test coverage: All 56 correctness properties implemented
+- Integration test coverage: All module interactions tested
+- Security test coverage: All compliance requirements tested
+
+**Quality Gates:**
+- All unit tests must pass
+- All property tests must pass (100 iterations each)
+- No critical security vulnerabilities
+- Performance requirements met
+- Code coverage thresholds met
+
+### Monitoring and Validation in Production
+
+**A/B Testing:**
+- Compare AI suggestions with clinician decisions
+- Measure acceptance rates for different suggestion types
+- Monitor time savings per document type
+
+**Shadow Mode Testing:**
+- Run new model versions in shadow mode
+- Compare outputs with production models
+- Validate before full deployment
+
+**Continuous Validation:**
+- Monitor demographic accuracy metrics
+- Track flagged statement rates
+- Monitor system performance metrics
+- Review audit logs for anomalies
+
+**Feedback Loop:**
+- Collect clinician feedback on AI suggestions
+- Track cases where AI and clinician decisions diverge
+- Use feedback to improve models and rules
+- Regular quality reviews with clinical staff
+
